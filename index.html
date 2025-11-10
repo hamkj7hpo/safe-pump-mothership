@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>MOTHERSHIP v4.0 — DASHBOARD</title>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: 'Courier New', monospace; background: #000; color: #0f0; padding: 20px; }
+    .card { background: #111; border: 1px solid #0f0; padding: 15px; margin: 10px 0; border-radius: 8px; }
+    .label { color: #0ff; font-weight: bold; }
+    .value { color: #0f0; }
+    button { background: #0f0; color: #000; border: none; padding: 10px; margin: 5px; cursor: pointer; }
+    button:hover { background: #0ff; }
+  </style>
+</head>
+<body>
+  <h1>MOTHERSHIP v4.0 — CONTROL CENTER</h1>
+  <button onclick="init()">CONNECT</button>
+  <button onclick="simulateBurn()">SIMULATE BURN</button>
+
+  <div id="dashboard"></div>
+
+  <script type="module">
+    import init, { 
+      MothershipClient,
+      record_burn_laser,
+      get_last_burn,
+      get_badge_holders_pda,
+      get_sol_vault_pda,
+      get_next_payout_time,
+      format_sol,
+      calculate_swap_tax,
+      get_fib_buy_cap
+    } from './mothership_client.js';
+    let client;
+
+    window.init = async () => {
+      await init();
+      client = new MothershipClient();
+      updateDashboard();
+    };
+
+    window.simulateBurn = () => {
+      const now = Math.floor(Date.now() / 1000);
+      record_burn_laser("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyK7fDi", 25, 5000000000, now);
+      updateDashboard();
+    };
+
+    function updateDashboard() {
+      const user = client.get_solana_pk();
+      const mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyK7fDi";
+      const lastBurn = get_last_burn();
+
+      const html = `
+        <div class="card">
+          <div class="label">USER</div>
+          <div class="value">${user.slice(0,8)}...${user.slice(-6)}</div>
+        </div>
+
+        <div class="card">
+          <div class="label">BURN LASER — LAST EVENT</div>
+          ${lastBurn ? `
+            <div class="value">Token: ${lastBurn.token_mint.slice(0,8)}...</div>
+            <div class="value">Burned: ${(lastBurn.amount_burned / 1e9).toFixed(2)} tokens (${lastBurn.percent}%)</div>
+            <div class="value">Time: ${new Date(lastBurn.timestamp * 1000).toLocaleString()}</div>
+          ` : '<div class="value">No burn recorded</div>'}
+        </div>
+
+        <div class="card">
+          <div class="label">BADGE HOLDERS PDA</div>
+          <div class="value">${get_badge_holders_pda(mint)}</div>
+        </div>
+
+        <div class="card">
+          <div class="label">SOL VAULT (NEXT PAYOUT)</div>
+          <div class="value">PDA: ${get_sol_vault_pda(user)}</div>
+          <div class="value">Next: ${new Date(get_next_payout_time(Math.floor(Date.now()/1000) - 86400) * 1000).toLocaleString()}</div>
+        </div>
+
+        <div class="card">
+          <div class="label">TAX SIMULATION (1 SOL IN)</div>
+          <div class="value">${JSON.stringify(calculate_swap_tax(1000000000))}</div>
+        </div>
+
+        <div class="card">
+          <div class="label">FIB BUY CAP @ 50K MCAP</div>
+          <div class="value">${(get_fib_buy_cap(50000000000, 1000000000000000000) / 1e9).toFixed(2)} tokens</div>
+        </div>
+      `;
+      document.getElementById('dashboard').innerHTML = html;
+    }
+  </script>
+</body>
+</html>

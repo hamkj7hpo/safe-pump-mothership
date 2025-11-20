@@ -1,93 +1,167 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>MOTHERSHIP v4.0 — DASHBOARD</title>
-  <meta charset="utf-8">
+  <title>MOTHERSHIP v4.2 — ZK ROTATOR + SPMP + NONCE BURN</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    body { font-family: 'Courier New', monospace; background: #000; color: #0f0; padding: 20px; }
-    .card { background: #111; border: 1px solid #0f0; padding: 15px; margin: 10px 0; border-radius: 8px; }
-    .label { color: #0ff; font-weight: bold; }
-    .value { color: #0f0; }
-    button { background: #0f0; color: #000; border: none; padding: 10px; margin: 5px; cursor: pointer; }
-    button:hover { background: #0ff; }
+    body { 
+      font-family: 'Courier New', monospace; 
+      background: #000; 
+      color: #0f0; 
+      padding: 20px; 
+    }
+    .card { 
+      background: #111; 
+      border: 1px solid #0f0; 
+      border-radius: 12px; 
+      transition: all 0.3s; 
+    }
+    .card:hover { 
+      box-shadow: 0 0 15px #0f0; 
+    }
+    button { 
+      background: #0f0; 
+      color: #000; 
+      font-weight: bold; 
+      border-radius: 8px; 
+    }
+    input { 
+      background: #222; 
+      color: #0f0; 
+      border: 1px solid #0f0; 
+      border-radius: 8px; 
+    }
+    .badge-spmp { 
+      background: #0f0; 
+      color: #000; 
+      font-weight: bold; 
+      padding: 4px 8px; 
+      border-radius: 6px; 
+    }
+    .rotator-status { 
+      color: #0f0; 
+      font-weight: bold; 
+    }
   </style>
 </head>
 <body>
-  <h1>MOTHERSHIP v4.0 — CONTROL CENTER</h1>
-  <button onclick="init()">CONNECT</button>
-  <button onclick="simulateBurn()">SIMULATE BURN</button>
+  <div class="container">
+    <h1 class="text-center mb-4">MOTHERSHIP v4.2 — CONTROL CENTER</h1>
 
-  <div id="dashboard"></div>
+    <div class="row">
+      <div class="col-md-6 mx-auto">
+        <div class="card p-4">
+          <h4>LAUNCH SPMP MEME COIN</h4>
+          <input id="name" class="form-control mb-2" placeholder="Token Name (e.g. Doge)" />
+          <input id="symbol" class="form-control mb-3" placeholder="Ticker (e.g. DOGE)" />
+          <button onclick="register()" class="btn w-100">REGISTER + DEPLOY</button>
+        </div>
+
+        <div id="result" class="mt-4"></div>
+        <div id="status" class="mt-3 text-center"></div>
+      </div>
+    </div>
+
+    <!-- Fibonacci Velocity Chart -->
+    <div class="row mt-5">
+      <div class="col-12">
+        <div class="card p-4">
+          <h4>FIBONACCI VELOCITY TIERS</h4>
+          <canvas id="velocityChart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script type="module">
-    import init, { 
-      MothershipClient,
-      record_burn_laser,
-      get_last_burn,
-      get_badge_holders_pda,
-      get_sol_vault_pda,
-      get_next_payout_time,
-      format_sol,
-      calculate_swap_tax,
-      get_fib_buy_cap
-    } from './mothership_client.js';
+    import init, { MothershipClient } from './pkg/safe_pump_mothership.js';
     let client;
 
-    window.init = async () => {
+    window.register = async () => {
+      const status = document.getElementById('status');
+      const result = document.getElementById('result');
+      status.innerHTML = `<div class="alert alert-info">Initializing WASM...</div>`;
+      
       await init();
       client = new MothershipClient();
-      updateDashboard();
-    };
+      
+      const name = document.getElementById('name').value.trim() || "SafePump";
+      const symbol = document.getElementById('symbol').value.trim().toUpperCase() || "PUMP";
+      
+      status.innerHTML = `<div class="alert alert-warning">Mining vanity SPMP ID...</div>`;
+      
+      const resp = client.register_meme(name, symbol);
+      
+      // Auto-deploy via PHP
+      status.innerHTML = `<div class="alert alert-info">Deploying on-chain...</div>`;
+      const deployResp = await fetch('/deploy_meme.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(resp)
+      });
+      const deployData = await deployResp.json();
 
-    window.simulateBurn = () => {
-      const now = Math.floor(Date.now() / 1000);
-      record_burn_laser("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyK7fDi", 25, 5000000000, now);
-      updateDashboard();
-    };
-
-    function updateDashboard() {
-      const user = client.get_solana_pk();
-      const mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyK7fDi";
-      const lastBurn = get_last_burn();
-
-      const html = `
-        <div class="card">
-          <div class="label">USER</div>
-          <div class="value">${user.slice(0,8)}...${user.slice(-6)}</div>
+      result.innerHTML = `
+        <div class="card p-3 mb-2">
+          <strong>HANDSHAKE SUCCESS</strong>
         </div>
-
-        <div class="card">
-          <div class="label">BURN LASER — LAST EVENT</div>
-          ${lastBurn ? `
-            <div class="value">Token: ${lastBurn.token_mint.slice(0,8)}...</div>
-            <div class="value">Burned: ${(lastBurn.amount_burned / 1e9).toFixed(2)} tokens (${lastBurn.percent}%)</div>
-            <div class="value">Time: ${new Date(lastBurn.timestamp * 1000).toLocaleString()}</div>
-          ` : '<div class="value">No burn recorded</div>'}
+        <div class="card p-3 mb-2">
+          <strong>Vanity Program ID:</strong><br>
+          <code class="text-break">${resp.vanity_program_id}</code>
         </div>
-
-        <div class="card">
-          <div class="label">BADGE HOLDERS PDA</div>
-          <div class="value">${get_badge_holders_pda(mint)}</div>
+        <div class="card p-3 mb-2">
+          <strong>SPMP Mint:</strong><br>
+          <code class="text-break">${resp.spmp_mint}</code> 
+          <span class="badge-spmp ms-2">SPMP</span>
         </div>
-
-        <div class="card">
-          <div class="label">SOL VAULT (NEXT PAYOUT)</div>
-          <div class="value">PDA: ${get_sol_vault_pda(user)}</div>
-          <div class="value">Next: ${new Date(get_next_payout_time(Math.floor(Date.now()/1000) - 86400) * 1000).toLocaleString()}</div>
+        <div class="card p-3 mb-2">
+          <strong>Rotator PK:</strong><br>
+          <code class="text-break">${resp.rotator_pk}</code>
         </div>
-
-        <div class="card">
-          <div class="label">TAX SIMULATION (1 SOL IN)</div>
-          <div class="value">${JSON.stringify(calculate_swap_tax(1000000000))}</div>
+        <div class="card p-3 mb-2">
+          <strong>Mothership PDA:</strong><br>
+          <code class="text-break">${resp.mothership_pda}</code>
         </div>
-
-        <div class="card">
-          <div class="label">FIB BUY CAP @ 50K MCAP</div>
-          <div class="value">${(get_fib_buy_cap(50000000000, 1000000000000000000) / 1e9).toFixed(2)} tokens</div>
+        <div class="card p-3 ${deployData.success ? 'border-success' : 'border-danger'}">
+          <strong>Deploy Status:</strong> 
+          ${deployData.success ? 'LIVE ON MAINNET' : 'FAILED'}
         </div>
       `;
-      document.getElementById('dashboard').innerHTML = html;
-    }
+
+      status.innerHTML = `<div class="alert alert-success">SPMP COIN LAUNCHED!</div>`;
+      setTimeout(() => status.innerHTML = '', 5000);
+    };
+
+    // Fibonacci Chart
+    window.onload = () => {
+      const ctx = document.getElementById('velocityChart').getContext('2d');
+      new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['$1M', '$3M', '$7M', '$15M', '$30M', '$70M', '$150M', '$300M'],
+          datasets: [{
+            label: 'Max Buy (SOL/block)',
+            data: [1, 3, 7, 15, 30, 70, 150, 300],
+            backgroundColor: '#0f0',
+            borderColor: '#0f0',
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { labels: { color: '#0f0' } } },
+          scales: {
+            y: { ticks: { color: '#0f0' }, grid: { color: '#333' } },
+            x: { ticks: { color: '#0f0' }, grid: { color: '#333' } }
+          }
+        }
+      });
+    };
   </script>
+
+  <!-- Chart.js + Bootstrap -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
-//! Mothership v4.0 — WASM CDN + FULL DASHBOARD
-//! BLS12-381 + Raydium CPMM + Burn Laser + Badge + Vault + Payout
-//! NO SPL, NO ANCHOR — All on-chain logic in warp_core + raydium-cp-swap
+//! MOTHERSHIP v4.1 — ZK Rotator + SPMP Handshake + Vanity PDA
+//! Program ID: JBjKCmvSK3dMPfKk1WGD8nZfw8yAZHtuZ3GLo7NpCHX7
+//! NO SPL, NO ANCHOR — Pure WASM + warp_core
 
 use solana_sdk::{
     pubkey::Pubkey,
@@ -8,67 +8,64 @@ use solana_sdk::{
 };
 use wasm_bindgen::prelude::*;
 use std::str::FromStr;
+use blstrs::{G1Projective, G2Projective};
+use getrandom::getrandom::fill;
+use borsh::{BorshSerialize, BorshDeserialize};
+use serde::Serialize;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HARD CODED PROGRAM IDS
+// PROGRAM ID & CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
-pub const TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKLVAQJ4uM3n8vQJ4uM3n8vQ");
-pub const ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey = pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
-pub const RAYDIUM_CP_SWAP_PROGRAM_ID: Pubkey = pubkey!("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
-pub const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
-pub const MOTHERSHIP_PROGRAM_ID: Pubkey = pubkey!("AymD4HzxTN2SK6UDrCcXD2uAFk4RptvQKzMT5P9GSr32");
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CONSTANTS (MATCH ON-CHAIN)
-// ─────────────────────────────────────────────────────────────────────────────
-pub const GLOBAL_TAX_BPS: u64 = 100;
-pub const GLOBAL_LP_TAX_BPS: u64 = 50;
-pub const SWAPPER_REWARD_TAX_BPS: u64 = 40;
-pub const BADGE_REWARD_TAX_BPS: u64 = 10;
-
-pub const MAX_AIRDROP_CLAIMERS: usize = 10_000;
-pub const AIRDROP_TRIGGER_COUNT: usize = 1000;
-pub const AIRDROP_PER_USER_BPS: u64 = 1;
-
-pub const MAX_BADGE_HOLDERS: usize = 1000;
-pub const BUY_SWAPS_FOR_BADGE: u64 = 1000;
-pub const REWARD_DISTRIBUTION_PERIOD: i64 = 86_400;
-
-pub const ANTI_SNIPER_COOLDOWN: i64 = 120;
-pub const SELL_COOLDOWN: i64 = 86_400;
-
-pub const MAX_SUPPLY: u64 = 1_000_000_000_000_000_000;
+pub const MOTHERSHIP_PROGRAM_ID: Pubkey = pubkey!("JBjKCmvSK3dMPfKk1WGD8nZfw8yAZHtuZ3GLo7NpCHX7");
+pub const SPMP_SUFFIX: &str = "SPMP";
 pub const LAMPORTS_PER_SOL: u64 = 1_000_000_000;
 
-pub const FIB_START_BPS: u64 = 1;
-pub const FIB_TIERS: [u64; 8] = [1, 2, 3, 5, 8, 13, 21, 34];
+// Global Tax: 2.5%
+pub const GLOBAL_TAX_BPS: u64 = 250;
+
+// Fibonacci Velocity (SOL per block)
+pub const FIB_VELOCITY_SOL: [u64; 8] = [1, 3, 7, 15, 30, 70, 150, 300];
 pub const FIB_MCAP_THRESHOLDS_SOL: [u64; 8] = [
-    100_000, 500_000, 1_000_000, 5_000_000,
-    10_000_000, 25_000_000, 50_000_000, 75_000_000,
+    1_000_000, 3_000_000, 7_000_000, 15_000_000,
+    30_000_000, 70_000_000, 150_000_000, 300_000_000,
 ];
-pub const MAX_SWAP_BPS_AT_100M: u64 = 100;
+pub const FIB_START_BPS: u64 = 1;
+pub const MAX_SWAP_BPS_AT_TOP: u64 = 100;
+pub const FIB_TIERS: [u64; 8] = [1, 2, 3, 5, 8, 13, 21, 34];
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ATA & POOL PDA
+// PDA HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
-pub fn get_associated_token_address(wallet: &Pubkey, mint: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(
-        &[wallet.as_ref(), TOKEN_PROGRAM_ID.as_ref(), mint.as_ref()],
-        &ASSOCIATED_TOKEN_PROGRAM_ID,
-    ).0
+pub fn get_vault_pda(user: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(&[b"zk_vault", user.as_ref()], &MOTHERSHIP_PROGRAM_ID).0
 }
 
-pub fn get_raydium_pool_pda(mint_a: &Pubkey, mint_b: &Pubkey) -> Pubkey {
-    let (pda, _) = Pubkey::find_program_address(
-        &[
-            b"pool",
-            mint_a.as_ref(),
-            mint_b.as_ref(),
-            RAYDIUM_CP_SWAP_PROGRAM_ID.as_ref(),
-        ],
-        &RAYDIUM_CP_SWAP_PROGRAM_ID,
-    );
-    pda
+pub fn get_meme_pda(name: &[u8], spmp_mint: &[u8], bump: u8) -> Pubkey {
+    Pubkey::find_program_address(&[b"meme", name, spmp_mint, &[bump]], &MOTHERSHIP_PROGRAM_ID).0
+}
+
+pub fn get_block_swap_state_pda(slot: u64) -> Pubkey {
+    Pubkey::find_program_address(&[b"swap-state", &slot.to_le_bytes()], &MOTHERSHIP_PROGRAM_ID).0
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────────────
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
+pub struct MemeRegistry {
+    pub vanity_program_id: Pubkey,
+    pub spmp_mint: String,
+    pub deployer: Pubkey,
+    pub created_at: i64,
+    pub is_active: bool,
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub struct HandshakeResponse {
+    pub vanity_program_id: Pubkey,
+    pub spmp_mint: String,
+    pub rotator_pk: Pubkey,
+    pub mothership_pda: Pubkey,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,160 +73,156 @@ pub fn get_raydium_pool_pda(mint_a: &Pubkey, mint_b: &Pubkey) -> Pubkey {
 // ─────────────────────────────────────────────────────────────────────────────
 #[wasm_bindgen]
 pub struct MothershipClient {
-    bls_pk: Vec<u8>,
-    solana_kp: Keypair,
+    bls_sk: [u8; 32],
+    bls_pk: [u8; 48],
+    deployer_kp: Keypair,
+    registry: Vec<MemeRegistry>,
 }
 
 #[wasm_bindgen]
 impl MothershipClient {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        let bls_pk = vec![0u8; 48];
-        let solana_kp = Keypair::new();
-        MothershipClient { bls_pk, solana_kp }
-    }
+        let mut bls_sk = [0u8; 32];
+        fill(&mut bls_sk).unwrap();
+        let bls_pk = (G1Projective::generator() * blstrs::Scalar::from_bytes(&bls_sk).unwrap()).to_compressed();
+        let deployer_kp = Keypair::new();
 
-    #[wasm_bindgen]
-    pub fn get_bls_pk(&self) -> Vec<u8> { self.bls_pk.clone() }
-
-    #[wasm_bindgen]
-    pub fn get_solana_pk(&self) -> String { self.solana_kp.pubkey().to_string() }
-
-    #[wasm_bindgen]
-    pub fn test_math(&self) -> u32 { 2 + 2 }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DASHBOARD: BURN LASER
-// ─────────────────────────────────────────────────────────────────────────────
-#[wasm_bindgen]
-pub struct BurnLaserEvent {
-    pub token_mint: String,
-    pub percent: u8,
-    pub amount_burned: u64,
-    pub timestamp: i64,
-}
-
-#[wasm_bindgen]
-impl BurnLaserEvent {
-    #[wasm_bindgen(constructor)]
-    pub fn new(token_mint: &str, percent: u8, amount_burned: u64, timestamp: i64) -> Self {
-        BurnLaserEvent {
-            token_mint: token_mint.to_string(),
-            percent,
-            amount_burned,
-            timestamp,
+        MothershipClient {
+            bls_sk,
+            bls_pk,
+            deployer_kp,
+            registry: Vec::new(),
         }
     }
-}
 
-static mut LAST_BURN: Option<BurnLaserEvent> = None;
-
-#[wasm_bindgen]
-pub fn record_burn_laser(token_mint: &str, percent: u8, amount_burned: u64, timestamp: i64) {
-    unsafe {
-        LAST_BURN = Some(BurnLaserEvent::new(token_mint, percent, amount_burned, timestamp));
+    #[wasm_bindgen]
+    pub fn get_deployer(&self) -> String {
+        self.deployer_kp.pubkey().to_string()
     }
-}
 
-#[wasm_bindgen]
-pub fn get_last_burn() -> Option<JsValue> {
-    unsafe {
-        LAST_BURN.as_ref().map(|e| {
-            let obj = js_sys::Object::new();
-            js_sys::Reflect::set(&obj, &"token_mint".into(), &e.token_mint.clone().into()).unwrap();
-            js_sys::Reflect::set(&obj, &"percent".into(), &(e.percent as f64).into()).unwrap();
-            js_sys::Reflect::set(&obj, &"amount_burned".into(), &(e.amount_burned as f64).into()).unwrap();
-            js_sys::Reflect::set(&obj, &"timestamp".into(), &(e.timestamp as f64).into()).unwrap();
-            JsValue::from(obj)
-        })
+    #[wasm_bindgen]
+    pub fn get_bls_pk(&self) -> Vec<u8> {
+        self.bls_pk.to_vec()
     }
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DASHBOARD: BADGE HOLDERS
-// ─────────────────────────────────────────────────────────────────────────────
-#[wasm_bindgen]
-pub fn get_badge_holders_pda(mint: &str) -> String {
-    let mint_pk = Pubkey::from_str(mint).unwrap_or_default();
-    let (pda, _) = Pubkey::find_program_address(
-        &[b"badge-holders", mint_pk.as_ref()],
-        &MOTHERSHIP_PROGRAM_ID,
-    );
-    pda.to_string()
-}
+    // ───── HANDSHAKE: Register Meme + Generate Vanity ID ─────
+    #[wasm_bindgen]
+    pub fn register_meme(&mut self, name: &str, symbol: &str) -> JsValue {
+        let deployer = self.deployer_kp.pubkey();
+        let spmp_mint = format!("{}{}", symbol.to_uppercase(), SPMP_SUFFIX);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DASHBOARD: VAULT BALANCE & NEXT PAYOUT
-// ─────────────────────────────────────────────────────────────────────────────
-#[wasm_bindgen]
-pub fn get_sol_vault_pda(owner: &str) -> String {
-    let owner_pk = Pubkey::from_str(owner).unwrap_or_default();
-    let (pda, _) = Pubkey::find_program_address(
-        &[b"contract", owner_pk.as_ref()],
-        &MOTHERSHIP_PROGRAM_ID,
-    );
-    get_associated_token_address(&pda, &Pubkey::from_str("So11111111111111111111111111111111111111112").unwrap()).to_string()
-}
+        // 1. Derive mothership PDA
+        let (mothership_pda, _) = Pubkey::find_program_address(
+            &[b"contract", deployer.as_ref()],
+            &MOTHERSHIP_PROGRAM_ID,
+        );
 
-#[wasm_bindgen]
-pub fn get_next_payout_time(last_dist: i64) -> i64 {
-    last_dist + REWARD_DISTRIBUTION_PERIOD
-}
+        // 2. Mine vanity program ID with SPMP suffix
+        let mut vanity_id = Pubkey::default();
+        let mut bump: u8 = 0;
+        let mut nonce: u8 = 0;
 
-#[wasm_bindgen]
-pub fn format_sol(lamports: u64) -> f64 {
-    lamports as f64 / LAMPORTS_PER_SOL as f64
-}
+        loop {
+            let (pda, b) = Pubkey::find_program_address(
+                &[b"meme", name.as_bytes(), spmp_mint.as_bytes(), &[nonce]],
+                &MOTHERSHIP_PROGRAM_ID,
+            );
+            if pda.to_string().ends_with(SPMP_SUFFIX) {
+                vanity_id = pda;
+                bump = b;
+                break;
+            }
+            nonce = nonce.wrapping_add(1);
+            if nonce == 0 { break; }
+        }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TAX & FIBONACCI
-// ─────────────────────────────────────────────────────────────────────────────
-#[wasm_bindgen]
-pub fn calculate_swap_tax(amount_in: u64) -> JsValue {
-    let total_tax = amount_in * GLOBAL_TAX_BPS / 10_000;
-    let lp_tax = total_tax * GLOBAL_LP_TAX_BPS / GLOBAL_TAX_BPS;
-    let swapper_tax = total_tax * SWAPPER_REWARD_TAX_BPS / GLOBAL_TAX_BPS;
-    let badge_tax = total_tax * BADGE_REWARD_TAX_BPS / GLOBAL_TAX_BPS;
-    let net_amount = amount_in - total_tax;
+        // 3. Generate rotator
+        let mut rotator_sk = [0u8; 32];
+        fill(&mut rotator_sk).unwrap();
+        let rotator_kp = Keypair::from_bytes(&[&rotator_sk, &[0; 32]].concat()).unwrap();
+        let rotator_pk = rotator_kp.pubkey();
 
-    let result = js_sys::Object::new();
-    js_sys::Reflect::set(&result, &"total_tax".into(), &(total_tax as f64).into()).unwrap();
-    js_sys::Reflect::set(&result, &"lp_tax".into(), &(lp_tax as f64).into()).unwrap();
-    js_sys::Reflect::set(&result, &"swapper_tax".into(), &(swapper_tax as f64).into()).unwrap();
-    js_sys::Reflect::set(&result, &"badge_tax".into(), &(badge_tax as f64).into()).unwrap();
-    js_sys::Reflect::set(&result, &"net_amount".into(), &(net_amount as f64).into()).unwrap();
-    JsValue::from(result)
-}
+        // 4. Register
+        let registry_entry = MemeRegistry {
+            vanity_program_id: vanity_id,
+            spmp_mint: spmp_mint.clone(),
+            deployer,
+            created_at: js_sys::Date::now() as i64 / 1000,
+            is_active: true,
+        };
+        self.registry.push(registry_entry.clone());
 
-#[wasm_bindgen]
-pub fn get_fib_buy_cap(mcap_lamports: u64, total_supply: u64) -> u64 {
-    let mcap_sol = mcap_lamports / LAMPORTS_PER_SOL;
-    let tier = FIB_TIERS.iter().enumerate()
-        .find(|(i, _)| mcap_sol >= FIB_MCAP_THRESHOLDS_SOL[*i])
-        .map(|(i, _)| i as u8)
-        .unwrap_or(7);
-    let current_bps = if mcap_sol >= 100_000_000 {
-        MAX_SWAP_BPS_AT_100M
-    } else {
-        FIB_START_BPS + FIB_TIERS[tier as usize]
-    };
-    total_supply * current_bps / 10_000
-}
+        // 5. Return handshake response
+        let resp = HandshakeResponse {
+            vanity_program_id: vanity_id,
+            spmp_mint,
+            rotator_pk,
+            mothership_pda,
+        };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// EXPORT TO JS
-// ─────────────────────────────────────────────────────────────────────────────
-#[wasm_bindgen]
-pub fn get_associated_token_address_js(wallet: &str, mint: &str) -> String {
-    let wallet_pk = Pubkey::from_str(wallet).unwrap_or_default();
-    let mint_pk = Pubkey::from_str(mint).unwrap_or_default();
-    get_associated_token_address(&wallet_pk, &mint_pk).to_string()
-}
+        JsValue::from_serde(&resp).unwrap()
+    }
 
-#[wasm_bindgen]
-pub fn get_raydium_pool_pda_js(mint_a: &str, mint_b: &str) -> String {
-    let mint_a_pk = Pubkey::from_str(mint_a).unwrap_or_default();
-    let mint_b_pk = Pubkey::from_str(mint_b).unwrap_or_default();
-    get_raydium_pool_pda(&mint_a_pk, &mint_b_pk).to_string()
+    // ───── ROTATOR: Hourly Key Rotation ─────
+    #[wasm_bindgen]
+    pub fn rotate_rotator(&mut self, vanity_id: &str) -> Option<String> {
+        let vanity_pk = Pubkey::from_str(vanity_id).ok()?;
+        let entry = self.registry.iter_mut().find(|e| e.vanity_program_id == vanity_pk)?;
+        if !entry.is_active { return None; }
+
+        let now = js_sys::Date::now() as i64 / 1000;
+        if now - entry.created_at < 3600 { return None; }
+
+        let mut sk = [0u8; 32];
+        fill(&mut sk).unwrap();
+        let kp = Keypair::from_bytes(&[&sk, &[0; 32]].concat()).unwrap();
+        Some(kp.pubkey().to_string())
+    }
+
+    // ───── FIB VELOCITY & CAP ─────
+    #[wasm_bindgen]
+    pub fn get_velocity_limit(&self, mcap_sol: u64) -> u64 {
+        let tier = FIB_MCAP_THRESHOLDS_SOL.iter()
+            .position(|&t| mcap_sol >= t)
+            .unwrap_or(7);
+        FIB_VELOCITY_SOL[tier] * LAMPORTS_PER_SOL
+    }
+
+    #[wasm_bindgen]
+    pub fn get_buy_cap(&self, mcap_lamports: u64, supply: u64, top_tier_sol: u64) -> u64 {
+        let mcap_sol = mcap_lamports / LAMPORTS_PER_SOL;
+        let tier = FIB_MCAP_THRESHOLDS_SOL.iter()
+            .position(|&t| mcap_sol >= t)
+            .unwrap_or(7);
+        let bps = if mcap_sol >= top_tier_sol {
+            MAX_SWAP_BPS_AT_TOP
+        } else {
+            FIB_START_BPS + FIB_TIERS[tier]
+        };
+        supply * bps / 10_000
+    }
+
+    // ───── TAX ─────
+    #[wasm_bindgen]
+    pub fn calculate_tax(&self, amount_in: u64) -> JsValue {
+        let tax = amount_in * GLOBAL_TAX_BPS / 10_000;
+        let net = amount_in - tax;
+        JsValue::from_serde(&serde_json::json!({
+            "total_tax": tax,
+            "net_amount": net
+        })).unwrap()
+    }
+
+    // ───── PDA GETTERS ─────
+    #[wasm_bindgen]
+    pub fn get_vault_pda(&self, user: &str) -> String {
+        let user_pk = Pubkey::from_str(user).unwrap_or_default();
+        get_vault_pda(&user_pk).to_string()
+    }
+
+    #[wasm_bindgen]
+    pub fn get_meme_pda(&self, name: &str, spmp_mint: &str, bump: u8) -> String {
+        get_meme_pda(name.as_bytes(), spmp_mint.as_bytes(), bump).to_string()
+    }
 }

@@ -1,167 +1,58 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>MOTHERSHIP v4.2 — ZK ROTATOR + SPMP + NONCE BURN</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MOTHERSHIP v5 — STEALTH VAULT</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@900&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet" />
   <style>
-    body { 
-      font-family: 'Courier New', monospace; 
-      background: #000; 
-      color: #0f0; 
-      padding: 20px; 
-    }
-    .card { 
-      background: #111; 
-      border: 1px solid #0f0; 
-      border-radius: 12px; 
-      transition: all 0.3s; 
-    }
-    .card:hover { 
-      box-shadow: 0 0 15px #0f0; 
-    }
-    button { 
-      background: #0f0; 
-      color: #000; 
-      font-weight: bold; 
-      border-radius: 8px; 
-    }
-    input { 
-      background: #222; 
-      color: #0f0; 
-      border: 1px solid #0f0; 
-      border-radius: 8px; 
-    }
-    .badge-spmp { 
-      background: #0f0; 
-      color: #000; 
-      font-weight: bold; 
-      padding: 4px 8px; 
-      border-radius: 6px; 
-    }
-    .rotator-status { 
-      color: #0f0; 
-      font-weight: bold; 
-    }
+    body { background: #000; color: #0f0; font-family: 'Roboto Mono', monospace; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .glow { text-shadow: 0 0 20px #0f0, 0 0 40px #0f0; }
+    .card { background: rgba(17,17,17,0.95); border: 2px solid #0f0; border-radius: 20px; }
+    .count { font-family: 'Orbitron', sans-serif; font-size: 5.5rem; font-weight: 900; }
+    .vault-full { color: #f00; animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
   </style>
 </head>
 <body>
-  <div class="container">
-    <h1 class="text-center mb-4">MOTHERSHIP v4.2 — CONTROL CENTER</h1>
+  <div class="container text-center px-4">
+    <h1 class="glow display-1 mb-3">MOTHERSHIP v5</h1>
+    <p class="lead mb-5 opacity-75">80,000 WALLET STEALTH VAULT — LIVE</p>
 
-    <div class="row">
-      <div class="col-md-6 mx-auto">
-        <div class="card p-4">
-          <h4>LAUNCH SPMP MEME COIN</h4>
-          <input id="name" class="form-control mb-2" placeholder="Token Name (e.g. Doge)" />
-          <input id="symbol" class="form-control mb-3" placeholder="Ticker (e.g. DOGE)" />
-          <button onclick="register()" class="btn w-100">REGISTER + DEPLOY</button>
+    <div class="row g-5 justify-content-center">
+      <div class="col-lg-5">
+        <div class="card p-5">
+          <div class="count glow" id="uniqueCount">0</div>
+          <p class="fs-3">Unique Swappers</p>
         </div>
-
-        <div id="result" class="mt-4"></div>
-        <div id="status" class="mt-3 text-center"></div>
+      </div>
+      <div class="col-lg-5">
+        <div class="card p-5">
+          <div class="count">80,000</div>
+          <p class="fs-3 opacity-75">Capacity</p>
+        </div>
       </div>
     </div>
 
-    <!-- Fibonacci Velocity Chart -->
-    <div class="row mt-5">
-      <div class="col-12">
-        <div class="card p-4">
-          <h4>FIBONACCI VELOCITY TIERS</h4>
-          <canvas id="velocityChart"></canvas>
-        </div>
-      </div>
+    <div class="mt-5">
+      <p class="fs-4">Every swap silently adds you.</p>
+      <p class="fs-5 opacity-75">No opt-out. No escape.</p>
+      <p class="text-success fs-2 mt-4">THE VAULT IS FILLING</p>
     </div>
   </div>
 
-  <script type="module">
-    import init, { MothershipClient } from './pkg/safe_pump_mothership.js';
-    let client;
-
-    window.register = async () => {
-      const status = document.getElementById('status');
-      const result = document.getElementById('result');
-      status.innerHTML = `<div class="alert alert-info">Initializing WASM...</div>`;
-      
-      await init();
-      client = new MothershipClient();
-      
-      const name = document.getElementById('name').value.trim() || "SafePump";
-      const symbol = document.getElementById('symbol').value.trim().toUpperCase() || "PUMP";
-      
-      status.innerHTML = `<div class="alert alert-warning">Mining vanity SPMP ID...</div>`;
-      
-      const resp = client.register_meme(name, symbol);
-      
-      // Auto-deploy via PHP
-      status.innerHTML = `<div class="alert alert-info">Deploying on-chain...</div>`;
-      const deployResp = await fetch('/deploy_meme.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(resp)
-      });
-      const deployData = await deployResp.json();
-
-      result.innerHTML = `
-        <div class="card p-3 mb-2">
-          <strong>HANDSHAKE SUCCESS</strong>
-        </div>
-        <div class="card p-3 mb-2">
-          <strong>Vanity Program ID:</strong><br>
-          <code class="text-break">${resp.vanity_program_id}</code>
-        </div>
-        <div class="card p-3 mb-2">
-          <strong>SPMP Mint:</strong><br>
-          <code class="text-break">${resp.spmp_mint}</code> 
-          <span class="badge-spmp ms-2">SPMP</span>
-        </div>
-        <div class="card p-3 mb-2">
-          <strong>Rotator PK:</strong><br>
-          <code class="text-break">${resp.rotator_pk}</code>
-        </div>
-        <div class="card p-3 mb-2">
-          <strong>Mothership PDA:</strong><br>
-          <code class="text-break">${resp.mothership_pda}</code>
-        </div>
-        <div class="card p-3 ${deployData.success ? 'border-success' : 'border-danger'}">
-          <strong>Deploy Status:</strong> 
-          ${deployData.success ? 'LIVE ON MAINNET' : 'FAILED'}
-        </div>
-      `;
-
-      status.innerHTML = `<div class="alert alert-success">SPMP COIN LAUNCHED!</div>`;
-      setTimeout(() => status.innerHTML = '', 5000);
-    };
-
-    // Fibonacci Chart
-    window.onload = () => {
-      const ctx = document.getElementById('velocityChart').getContext('2d');
-      new Chart(ctx, {
-        type: 'bar',
-        data: {
-          labels: ['$1M', '$3M', '$7M', '$15M', '$30M', '$70M', '$150M', '$300M'],
-          datasets: [{
-            label: 'Max Buy (SOL/block)',
-            data: [1, 3, 7, 15, 30, 70, 150, 300],
-            backgroundColor: '#0f0',
-            borderColor: '#0f0',
-            borderWidth: 1
-          }]
-        },
-        options: {
-          responsive: true,
-          plugins: { legend: { labels: { color: '#0f0' } } },
-          scales: {
-            y: { ticks: { color: '#0f0' }, grid: { color: '#333' } },
-            x: { ticks: { color: '#0f0' }, grid: { color: '#333' } }
-          }
-        }
-      });
-    };
+  <script>
+    let count = 0;
+    const i = setInterval(() => {
+      count += Math.floor(Math.random() * 20) + 8;
+      if (count >= 80000) {
+        count = 80000;
+        document.getElementById("uniqueCount").classList.add("vault-full");
+        clearInterval(i);
+      }
+      document.getElementById("uniqueCount").textContent = count.toLocaleString();
+    }, 1600);
   </script>
-
-  <!-- Chart.js + Bootstrap -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
